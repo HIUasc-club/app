@@ -5,7 +5,6 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>交通費申請システム</title>
   <style>
-    /* ===== style.css + admin.css の統合 ===== */
     body {
       font-family: 'Segoe UI', sans-serif;
       margin: 0;
@@ -74,6 +73,28 @@
       justify-content: space-between;
       align-items: center;
     }
+    .result-box {
+      background-color: #f8f9fa;
+      padding: 1rem;
+      border-radius: 5px;
+      margin-top: 1rem;
+      border-left: 4px solid #28a745;
+    }
+    .error-message {
+      color: #dc3545;
+      font-size: 0.875rem;
+      margin-top: -0.5rem;
+      margin-bottom: 0.5rem;
+    }
+    .pagination {
+      display: flex;
+      justify-content: center;
+      margin-top: 1rem;
+    }
+    .pagination button {
+      width: auto;
+      margin: 0 0.25rem;
+    }
     @media (max-width: 768px) {
       .container {
         margin: 1rem;
@@ -87,7 +108,6 @@
   </style>
 </head>
 <body>
-  <!-- ===== ログインページ (login.html) ===== -->
   <div id="loginPage" class="login-page">
     <div class="login-box">
       <h2>交通費申請システム</h2>
@@ -105,38 +125,51 @@
     </div>
   </div>
 
-  <!-- ===== 一般ユーザーフォーム (form.html) ===== -->
   <div id="formPage" class="container" style="display: none;">
     <h1>交通費申請フォーム</h1>
     <form id="requestForm">
       <p id="userInfo"></p>
       <label for="date">利用日:</label>
-      <input type="date" id="date" required>
+      <input type="date" id="date" required max="">
+      <div id="dateError" class="error-message"></div>
+      
       <label for="from">出発地:</label>
-      <input type="text" id="from" required>
+      <input type="text" id="from" required maxlength="50">
+      <div id="fromError" class="error-message"></div>
+      
       <label for="to">到着地:</label>
-      <input type="text" id="to" required>
+      <input type="text" id="to" required maxlength="50">
+      <div id="toError" class="error-message"></div>
+      
       <label>区間:</label>
       <select id="direction" required>
         <option value="">選択してください</option>
         <option value="往路">往路</option>
         <option value="復路">復路</option>
       </select>
+      <div id="directionError" class="error-message"></div>
+      
+      <label for="amount">金額（円）:</label>
+      <input type="number" id="amount" required min="0" max="100000">
+      <div id="amountError" class="error-message"></div>
+      
       <button type="submit">送信</button>
     </form>
     <div id="result"></div>
   </div>
 
-  <!-- ===== 管理者ページ (admin.html) ===== -->
   <div id="adminPage" style="display: none;">
     <header>
       <h1>管理者ページ</h1>
       <button onclick="logout()">ログアウト</button>
     </header>
-    <main>
+    <main class="container">
       <section>
         <h2>申請データプレビュー</h2>
-        <button onclick="downloadCSV()">CSV出力</button>
+        <div style="margin-bottom: 1rem;">
+          <button onclick="downloadCSV()">CSV出力</button>
+          <button onclick="clearAllData()" style="background-color: #dc3545; margin-left: 0.5rem;">全データ削除</button>
+        </div>
         <table id="dataTable">
           <thead>
             <tr>
@@ -146,45 +179,78 @@
               <th>出発地</th>
               <th>到着地</th>
               <th>区間</th>
+              <th>金額</th>
+              <th>操作</th>
             </tr>
           </thead>
           <tbody></tbody>
         </table>
+        <div class="pagination">
+          <button id="prevPage" disabled>前へ</button>
+          <span id="pageInfo" style="margin: 0 1rem;">ページ 1/1</span>
+          <button id="nextPage" disabled>次へ</button>
+        </div>
       </section>
     </main>
   </div>
 
   <script>
-    // ===== login.js =====
+    // パスワードをハッシュ化する簡易関数 (実際の実装ではより強力なハッシュ関数を使用すべき)
+    function simpleHash(str) {
+      let hash = 0;
+      for (let i = 0; i < str.length; i++) {
+        const char = str.charCodeAt(i);
+        hash = (hash << 5) - hash + char;
+        hash = hash & hash; // Convert to 32bit integer
+      }
+      return hash.toString();
+    }
+
+    // ユーザーデータ (実際の実装ではサーバーサイドで管理すべき)
     const userMembers = [
-      { id: "B23317", password: "1234", name: "藤本健太" },
-      { id: "23456789", password: "user456", name: "佐藤花子" },
-      { id: "34567890", password: "user789", name: "鈴木次郎" }
+      { id: "B23317", password: simpleHash("1234"), name: "藤本健太" },
+      { id: "23456789", password: simpleHash("user456"), name: "佐藤花子" },
+      { id: "34567890", password: simpleHash("user789"), name: "鈴木次郎" }
     ];
     const adminMembers = [
-      { id: "B23307", password: "1234", name: "鎌谷篤志" },
-      { id: "admin2", password: "admin456", name: "事務局担当者" }
+      { id: "B23307", password: simpleHash("1234"), name: "鎌谷篤志" },
+      { id: "admin2", password: simpleHash("admin456"), name: "事務局担当者" }
     ];
 
+    // 申請データとページネーション用変数
+    let applications = JSON.parse(localStorage.getItem('apps')) || [];
+    let currentPage = 1;
+    const itemsPerPage = 10;
+
+    // 日付の最大値を今日に設定
+    document.addEventListener('DOMContentLoaded', function() {
+      const today = new Date().toISOString().split('T')[0];
+      document.getElementById('date').max = today;
+    });
+
+    // ログイン処理
     document.getElementById("loginForm").addEventListener("submit", function(e) {
       e.preventDefault();
       const userId = document.getElementById("user_id").value.trim();
       const password = document.getElementById("password").value.trim();
       const isAdmin = document.querySelector('input[name="user_type"]:checked').value === "admin";
-
-      if (!userId || !password) {
-        alert("IDとパスワードを入力してください。");
-        return;
-      }
-
       let authenticatedUser = null;
       let userType = "";
 
+      // 簡易的なブルートフォース攻撃対策
+      const loginAttempts = parseInt(sessionStorage.getItem('loginAttempts') || 0);
+      if (loginAttempts >= 5) {
+        alert('ログイン試行回数が多すぎます。しばらく待ってから再度お試しください。');
+        return;
+      }
+
       if (isAdmin) {
-        authenticatedUser = adminMembers.find(admin => admin.id === userId && admin.password === password);
+        authenticatedUser = adminMembers.find(admin => 
+          admin.id === userId && admin.password === simpleHash(password));
         userType = "admin";
       } else {
-        authenticatedUser = userMembers.find(user => user.id === userId && user.password === password);
+        authenticatedUser = userMembers.find(user => 
+          user.id === userId && user.password === simpleHash(password));
         userType = "user";
       }
 
@@ -192,96 +258,246 @@
         sessionStorage.setItem("user_type", userType);
         sessionStorage.setItem("user_id", authenticatedUser.id);
         sessionStorage.setItem("user_name", authenticatedUser.name);
+        sessionStorage.removeItem('loginAttempts');
         
+        document.getElementById("loginPage").style.display = "none";
         if (userType === "admin") {
-          document.getElementById("loginPage").style.display = "none";
           document.getElementById("adminPage").style.display = "block";
           renderApplications();
         } else {
-          document.getElementById("loginPage").style.display = "none";
           document.getElementById("formPage").style.display = "block";
-          document.getElementById("userInfo").innerHTML = `【${authenticatedUser.id}】${authenticatedUser.name} さん`;
+          document.getElementById("userInfo").innerHTML = 
+            `【${authenticatedUser.id}】${authenticatedUser.name} さん`;
         }
       } else {
-        alert(`${isAdmin ? "管理者" : "ユーザー"}IDまたはパスワードが間違っています。`);
+        sessionStorage.setItem('loginAttempts', loginAttempts + 1);
+        alert("IDまたはパスワードが間違っています。");
       }
     });
 
-    // ===== form.js =====
+    // 交通費申請フォームのバリデーション
+    function validateForm() {
+      let isValid = true;
+      const date = document.getElementById("date").value;
+      const from = document.getElementById("from").value.trim();
+      const to = document.getElementById("to").value.trim();
+      const direction = document.getElementById("direction").value;
+      const amount = document.getElementById("amount").value;
+      
+      // 日付の検証
+      if (!date) {
+        document.getElementById("dateError").textContent = "日付を入力してください";
+        isValid = false;
+      } else {
+        const selectedDate = new Date(date);
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        
+        if (selectedDate > today) {
+          document.getElementById("dateError").textContent = "未来の日付は指定できません";
+          isValid = false;
+        } else {
+          document.getElementById("dateError").textContent = "";
+        }
+      }
+      
+      // 出発地の検証
+      if (!from) {
+        document.getElementById("fromError").textContent = "出発地を入力してください";
+        isValid = false;
+      } else if (from.length > 50) {
+        document.getElementById("fromError").textContent = "50文字以内で入力してください";
+        isValid = false;
+      } else {
+        document.getElementById("fromError").textContent = "";
+      }
+      
+      // 到着地の検証
+      if (!to) {
+        document.getElementById("toError").textContent = "到着地を入力してください";
+        isValid = false;
+      } else if (to.length > 50) {
+        document.getElementById("toError").textContent = "50文字以内で入力してください";
+        isValid = false;
+      } else {
+        document.getElementById("toError").textContent = "";
+      }
+      
+      // 区間の検証
+      if (!direction) {
+        document.getElementById("directionError").textContent = "区間を選択してください";
+        isValid = false;
+      } else {
+        document.getElementById("directionError").textContent = "";
+      }
+      
+      // 金額の検証
+      if (!amount) {
+        document.getElementById("amountError").textContent = "金額を入力してください";
+        isValid = false;
+      } else if (amount < 0) {
+        document.getElementById("amountError").textContent = "正の値を入力してください";
+        isValid = false;
+      } else if (amount > 100000) {
+        document.getElementById("amountError").textContent = "金額が大きすぎます";
+        isValid = false;
+      } else {
+        document.getElementById("amountError").textContent = "";
+      }
+      
+      return isValid;
+    }
+
+    // 交通費申請送信処理
     document.getElementById("requestForm").addEventListener("submit", function(e) {
       e.preventDefault();
-      const formData = {
-        date: document.getElementById("date").value,
-        from: document.getElementById("from").value,
-        to: document.getElementById("to").value,
-        direction: document.getElementById("direction").value
-      };
-
-      if (!formData.date || !formData.from || !formData.to || !formData.direction) {
-        alert("すべての項目を入力してください。");
+      
+      if (!validateForm()) {
         return;
       }
 
+      const formData = {
+        id: sessionStorage.getItem("user_id"),
+        name: sessionStorage.getItem("user_name"),
+        date: document.getElementById("date").value,
+        from: document.getElementById("from").value.trim(),
+        to: document.getElementById("to").value.trim(),
+        direction: document.getElementById("direction").value,
+        amount: document.getElementById("amount").value,
+        timestamp: new Date().toISOString()
+      };
+
+      saveApplication(formData);
+
       const result = `
         <div class="result-box">
-          <p><strong>送信完了！</strong></p>
-          <p>学籍番号: ${sessionStorage.getItem("user_id")}</p>
-          <p>氏名: ${sessionStorage.getItem("user_name")}</p>
+          <h3>送信完了</h3>
+          <p><strong>交通費申請が正常に送信されました</strong></p>
+          <p>学籍番号: ${formData.id}</p>
+          <p>氏名: ${formData.name}</p>
           <p>日付: ${formData.date}</p>
           <p>出発地: ${formData.from}</p>
           <p>到着地: ${formData.to}</p>
           <p>区間: ${formData.direction}</p>
+          <p>金額: ${formData.amount} 円</p>
         </div>
       `;
       document.getElementById("result").innerHTML = result;
       this.reset();
     });
 
-    // ===== admin.js =====
-    let applications = []; // 空の配列で初期化
+    // 申請データの保存
+    function saveApplication(newApp) {
+      applications.push(newApp);
+      localStorage.setItem('apps', JSON.stringify(applications));
+      if (sessionStorage.getItem("user_type") === "admin") {
+        renderApplications();
+      }
+    }
 
+    // 申請データの表示
     function renderApplications() {
       const tbody = document.querySelector("#dataTable tbody");
       tbody.innerHTML = "";
       
-      if (applications.length === 0) {
+      // ページネーション処理
+      const startIndex = (currentPage - 1) * itemsPerPage;
+      const endIndex = startIndex + itemsPerPage;
+      const paginatedApps = applications.slice(startIndex, endIndex);
+      const totalPages = Math.ceil(applications.length / itemsPerPage);
+      
+      document.getElementById("pageInfo").textContent = `ページ ${currentPage}/${totalPages}`;
+      document.getElementById("prevPage").disabled = currentPage <= 1;
+      document.getElementById("nextPage").disabled = currentPage >= totalPages;
+
+      if (paginatedApps.length === 0) {
         const row = document.createElement("tr");
-        row.innerHTML = `<td colspan="6" style="text-align: center;">申請データがありません</td>`;
+        row.innerHTML = `<td colspan="8" style="text-align: center;">申請データがありません</td>`;
         tbody.appendChild(row);
-      } else {
-        applications.forEach(app => {
-          const row = document.createElement("tr");
-          row.innerHTML = `
-            <td>${app.id}</td>
-            <td>${app.name}</td>
-            <td>${app.date}</td>
-            <td>${app.from}</td>
-            <td>${app.to}</td>
-            <td>${app.direction}</td>
-          `;
-          tbody.appendChild(row);
-        });
+        return;
+      }
+
+      paginatedApps.forEach((app, index) => {
+        const row = document.createElement("tr");
+        row.innerHTML = `
+          <td>${app.id}</td>
+          <td>${app.name}</td>
+          <td>${app.date}</td>
+          <td>${app.from}</td>
+          <td>${app.to}</td>
+          <td>${app.direction}</td>
+          <td>${app.amount} 円</td>
+          <td><button onclick="deleteApplication(${startIndex + index})" style="padding: 0.25rem 0.5rem; background-color: #dc3545;">削除</button></td>
+        `;
+        tbody.appendChild(row);
+      });
+    }
+
+    // ページネーション処理
+    document.getElementById("prevPage").addEventListener("click", function() {
+      if (currentPage > 1) {
+        currentPage--;
+        renderApplications();
+      }
+    });
+
+    document.getElementById("nextPage").addEventListener("click", function() {
+      const totalPages = Math.ceil(applications.length / itemsPerPage);
+      if (currentPage < totalPages) {
+        currentPage++;
+        renderApplications();
+      }
+    });
+
+    // 申請データの削除
+    function deleteApplication(index) {
+      if (confirm("本当にこの申請データを削除しますか？")) {
+        applications.splice(index, 1);
+        localStorage.setItem('apps', JSON.stringify(applications));
+        
+        // 現在のページが空になった場合、前のページに移動
+        const totalPages = Math.ceil(applications.length / itemsPerPage);
+        if (currentPage > totalPages && totalPages > 0) {
+          currentPage = totalPages;
+        }
+        
+        renderApplications();
       }
     }
 
+    // 全データ削除
+    function clearAllData() {
+      if (confirm("本当にすべての申請データを削除しますか？この操作は元に戻せません。")) {
+        applications = [];
+        localStorage.removeItem('apps');
+        currentPage = 1;
+        renderApplications();
+      }
+    }
+
+    // CSV出力
     function downloadCSV() {
       if (applications.length === 0) {
         alert("出力するデータがありません");
         return;
       }
-
-      let csv = "学籍番号,氏名,日付,出発地,到着地,区間\n";
+      
+      let csv = "\uFEFF学籍番号,氏名,日付,出発地,到着地,区間,金額\n";
       applications.forEach(app => {
-        csv += `${app.id},${app.name},${app.date},${app.from},${app.to},${app.direction}\n`;
+        csv += `${app.id},${app.name},${app.date},${app.from},${app.to},${app.direction},${app.amount}\n`;
       });
-      const blob = new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8;" });
+      
+      const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
       const url = URL.createObjectURL(blob);
       const link = document.createElement("a");
       link.setAttribute("href", url);
       link.setAttribute("download", `交通費申請_${new Date().toISOString().slice(0,10)}.csv`);
+      document.body.appendChild(link);
       link.click();
+      document.body.removeChild(link);
     }
 
+    // ログアウト処理
     function logout() {
       sessionStorage.clear();
       document.getElementById("loginPage").style.display = "flex";
@@ -291,11 +507,19 @@
       document.getElementById("password").value = "";
     }
 
-    // 初期表示（ログイン済みかチェック）
+    // セッションタイムアウト監視
+    setInterval(() => {
+      if (!sessionStorage.getItem('user_id')) {
+        alert('セッションが切れました');
+        logout();
+      }
+    }, 300000);
+
+    // 初期表示処理
     window.addEventListener("DOMContentLoaded", () => {
       const userType = sessionStorage.getItem("user_type");
       const userId = sessionStorage.getItem("user_id");
-      
+
       if (userId) {
         if (userType === "admin") {
           document.getElementById("loginPage").style.display = "none";
@@ -304,7 +528,8 @@
         } else {
           document.getElementById("loginPage").style.display = "none";
           document.getElementById("formPage").style.display = "block";
-          document.getElementById("userInfo").innerHTML = `【${userId}】${sessionStorage.getItem("user_name")} さん`;
+          document.getElementById("userInfo").innerHTML = 
+            `【${userId}】${sessionStorage.getItem("user_name")} さん`;
         }
       }
     });
